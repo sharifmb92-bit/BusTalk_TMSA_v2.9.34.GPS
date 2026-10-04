@@ -76,7 +76,7 @@ function busTalkApp() {
         modoAutoGPS: true, gpsActivo: false, coordsTexto: '',
         
         // VARIABLES DE LUPA DE DIAGNÓSTICO Y CERTEZA GPS (medbasha)
-        gpsDiagNombre: 'Ninguno',
+        gpsDiagNombre: 'Sin destino (0%)',
         gpsDiagDistancia: 0,
         gpsDiagVelocidad: 0,
         inicioDetenidoTimestamp: null,
@@ -295,13 +295,20 @@ function busTalkApp() {
             if ("vibrate" in navigator) navigator.vibrate(50);
         },
 
+        // BUSCADOR FLEXIBLE Y NORMALIZADO DE COORDENADAS (medbasha)
         obtenerCoordenadasDestino(nombreParada) {
-            if (this.esSentidoIda && this.coordenadasParadasIda[nombreParada]) {
-                return this.coordenadasParadasIda[nombreParada];
-            } else if (!this.esSentidoIda && this.coordenadasParadasVuelta[nombreParada]) {
-                return this.coordenadasParadasVuelta[nombreParada];
+            if (!nombreParada) return null;
+            let nombreLimpio = nombreParada.trim();
+
+            if (nombreLimpio.startsWith("Ferr")) nombreLimpio = "Ferr";
+            if (nombreLimpio.startsWith("Alaior")) nombreLimpio = nombreLimpio.includes("C") ? "Alaior C." : "Alaior P.";
+
+            if (this.esSentidoIda && this.coordenadasParadasIda[nombreLimpio]) {
+                return this.coordenadasParadasIda[nombreLimpio];
+            } else if (!this.esSentidoIda && this.coordenadasParadasVuelta[nombreLimpio]) {
+                return this.coordenadasParadasVuelta[nombreLimpio];
             }
-            return this.coordenadasParadasGeneral[nombreParada] || null;
+            return this.coordenadasParadasGeneral[nombreLimpio] || null;
         },
 
         iniciarGPSGeofencing() {
@@ -332,30 +339,30 @@ function busTalkApp() {
             const distancia = this.calcularDistanciaMetros(lat, lng, coordsDestino.lat, coordsDestino.lng);
             this.gpsDiagDistancia = Math.round(distancia);
 
-            if (distancia <= 40) score += 40;
-            else if (distancia <= 80) score += 25;
-            else if (distancia <= 120) score += 15;
+            if (distancia <= 50) score += 40;
+            else if (distancia <= 100) score += 25;
+            else if (distancia <= 150) score += 15;
             else {
                 this.inicioDetenidoTimestamp = null;
-                return 0; // Fuera de radio de 120m
+                return 0; // Fuera de radio de 150m -> 0%
             }
 
-            // 2. EVALUAR VELOCIDAD (Máx 30 pts)
-            if (velocidadKmh <= 3) score += 30;
-            else if (velocidadKmh <= 8) score += 15;
-            else {
-                this.inicioDetenidoTimestamp = null;
-                return 0; // Bus a más de 8 km/h
-            }
+            // 2. EVALUAR VELOCIDAD DE FRENADO (Máx 30 pts)
+            if (velocidadKmh <= 5) score += 30;
+            else if (velocidadKmh <= 12) score += 15;
 
             // 3. EVALUAR TIEMPO DETENIDO CONTINUO (Máx 30 pts)
-            if (!this.inicioDetenidoTimestamp) {
-                this.inicioDetenidoTimestamp = Date.now();
-            }
-            const segsParado = (Date.now() - this.inicioDetenidoTimestamp) / 1000;
+            if (velocidadKmh <= 5) {
+                if (!this.inicioDetenidoTimestamp) {
+                    this.inicioDetenidoTimestamp = Date.now();
+                }
+                const segsParado = (Date.now() - this.inicioDetenidoTimestamp) / 1000;
 
-            if (segsParado >= 6) score += 30;
-            else if (segsParado >= 3) score += 15;
+                if (segsParado >= 5) score += 30;
+                else if (segsParado >= 2) score += 15;
+            } else {
+                this.inicioDetenidoTimestamp = null;
+            }
 
             return Math.min(100, Math.max(0, score));
         },
@@ -365,7 +372,7 @@ function busTalkApp() {
             this.gpsDiagVelocidad = Math.round(velocidadKmh);
 
             if (!siguienteDestino) {
-                this.gpsDiagNombre = 'Sin destino';
+                this.gpsDiagNombre = 'Sin destino (0%)';
                 this.gpsDiagDistancia = 0;
                 return;
             }
@@ -373,13 +380,14 @@ function busTalkApp() {
             const coordsDestino = this.obtenerCoordenadasDestino(siguienteDestino);
 
             if (!coordsDestino) {
-                this.gpsDiagNombre = siguienteDestino + ' (Sin Coords)';
+                this.gpsDiagNombre = `${siguienteDestino} (0%)`;
                 this.gpsDiagDistancia = 0;
                 return;
             }
 
+            // Si ya estamos parados en la marquesina
             if (this.enParada) {
-                this.gpsDiagNombre = siguienteDestino;
+                this.gpsDiagNombre = `${siguienteDestino} (100%)`;
                 this.gpsDiagDistancia = Math.round(this.calcularDistanciaMetros(lat, lng, coordsDestino.lat, coordsDestino.lng));
                 return;
             }
@@ -387,7 +395,7 @@ function busTalkApp() {
             // Cálculo de Certeza en Parada (Score 0 - 100%)
             const certeza = this.evaluarCertezaEnParada(lat, lng, velocidadKmh, coordsDestino);
             
-            // Refleja el porcentaje de certeza en la Lupa de Diagnóstico
+            // Refleja SIEMPRE el porcentaje explícito entre paréntesis (Ej: Ferr (0%))
             this.gpsDiagNombre = `${siguienteDestino} (${certeza}%)`;
 
             // UMBRAL AUTOMÁTICO AL ALCANZAR EL 85% DE CERTEZA
